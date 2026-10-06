@@ -1,0 +1,16 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Large preprocessed data artifacts
+kapil_preprocessed_data/
+*.npy
+*.pkl
+*.csv
+
+# Environments
+.venv/
+env/
+venv/
+.pytest_cache/
