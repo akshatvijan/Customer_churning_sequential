@@ -11,6 +11,11 @@ def test_health():
     data = res.json()
     assert data["status"] == "healthy"
     assert "pytorch_version" in data
+    assert "models" in data
+    assert "rnn" in data["models"]
+    assert "lstm" in data["models"]
+    assert "ann" in data["models"]
+    assert "sequence_scaler" in data["models"]
 
 
 def test_predict_ann():

@@ -9,10 +9,13 @@ MODELS_DIR = ARTIFACTS_DIR / "models"
 # Ensure directories exist
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
-# Model file paths
+# Model file paths (aligned with Aditya's rnn package and legacy paths)
+RNN_MODEL_PATH = MODELS_DIR / "rnn_churn.pt"
+RNN_LEGACY_PATH = MODELS_DIR / "churn_rnn.pt"
+LSTM_MODEL_PATH = MODELS_DIR / "lstm_churn.pt"
+LSTM_LEGACY_PATH = MODELS_DIR / "churn_lstm.pt"
 ANN_MODEL_PATH = MODELS_DIR / "churn_ann.pt"
-RNN_MODEL_PATH = MODELS_DIR / "churn_rnn.pt"
-LSTM_MODEL_PATH = MODELS_DIR / "churn_lstm.pt"
+SEQ_SCALER_PATH = MODELS_DIR / "sequence_scaler.pkl"
 PREPROCESSOR_PATH = MODELS_DIR / "preprocessor.joblib"
 
 # Churn Risk Boundaries (matching Ridhima's retention strategy)
@@ -32,6 +35,7 @@ SEQ_FEATURES = [
     "late_payments",
     "days_since_last_interaction",
 ]
+COUNT_FEATURES = ["num_complaints", "num_service_calls", "late_payments"]
 SEQUENCE_LENGTH = 5
 
 # Retention Strategy Business Rule Table

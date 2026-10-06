@@ -8,10 +8,45 @@ import numpy as np
 from app.config import (
     ANN_MODEL_PATH,
     RNN_MODEL_PATH,
+    RNN_LEGACY_PATH,
     LSTM_MODEL_PATH,
+    LSTM_LEGACY_PATH,
+    SEQ_SCALER_PATH,
     SEQ_FEATURES,
     SEQUENCE_LENGTH
 )
+
+# Attempt import from Aditya's rnn package with graceful fallback
+try:
+    from rnn.models import ChurnRNN, ChurnLSTM
+except ImportError:
+    class ChurnRNN(nn.Module):
+        """Vanilla Recurrent Neural Network for sequential customer behaviour trajectory."""
+        def __init__(self, input_size: int = len(SEQ_FEATURES), hidden_size: int = 64, num_layers: int = 1):
+            super().__init__()
+            self.rnn = nn.RNN(input_size, hidden_size, num_layers=num_layers, batch_first=True)
+            self.fc = nn.Linear(hidden_size, 1)
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            output, hidden = self.rnn(x)
+            return self.fc(output[:, -1, :])
+
+    class ChurnLSTM(nn.Module):
+        """Long Short-Term Memory Network for long-term customer behaviour dependencies."""
+        def __init__(self, input_size: int = len(SEQ_FEATURES), hidden_size: int = 64, num_layers: int = 1, dropout: float = 0.2):
+            super().__init__()
+            self.lstm = nn.LSTM(
+                input_size,
+                hidden_size,
+                num_layers=num_layers,
+                batch_first=True,
+                dropout=dropout if num_layers > 1 else 0.0
+            )
+            self.fc = nn.Linear(hidden_size, 1)
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            output, (hidden, cell) = self.lstm(x)
+            return self.fc(hidden[-1])
 
 
 # ==========================================
@@ -46,49 +81,23 @@ class ChurnANN(nn.Module):
         return self.network(x)
 
 
-class ChurnRNN(nn.Module):
-    """Vanilla Recurrent Neural Network for sequential customer behaviour trajectory."""
-    def __init__(self, input_size: int = len(SEQ_FEATURES), hidden_size: int = 64, num_layers: int = 1):
-        super().__init__()
-        self.rnn = nn.RNN(input_size, hidden_size, num_layers=num_layers, batch_first=True)
-        self.fc = nn.Linear(hidden_size, 1)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        output, hidden = self.rnn(x)
-        # Last timestep hidden output
-        return self.fc(output[:, -1, :])
-
-
-class ChurnLSTM(nn.Module):
-    """Long Short-Term Memory Network for long-term customer behaviour dependencies."""
-    def __init__(self, input_size: int = len(SEQ_FEATURES), hidden_size: int = 64, num_layers: int = 1, dropout: float = 0.2):
-        super().__init__()
-        self.lstm = nn.LSTM(
-            input_size,
-            hidden_size,
-            num_layers=num_layers,
-            batch_first=True,
-            dropout=dropout if num_layers > 1 else 0.0
-        )
-        self.fc = nn.Linear(hidden_size, 1)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        output, (hidden, cell) = self.lstm(x)
-        return self.fc(hidden[-1])
-
-
 # ==========================================
 # 2. MODEL MANAGER & LOADER
 # ==========================================
 
 class ModelManager:
-    """Manages model loading, caching, and evaluation."""
+    """Manages model loading, caching, checkpoint decoding, and diagnostics."""
     def __init__(self):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.ann: Optional[ChurnANN] = None
         self.rnn: Optional[ChurnRNN] = None
         self.lstm: Optional[ChurnLSTM] = None
         self.input_dim: int = 40
+        self.ann_loaded: bool = False
+        self.rnn_loaded: bool = False
+        self.lstm_loaded: bool = False
+        self.rnn_metadata: dict = {}
+        self.lstm_metadata: dict = {}
 
     def get_ann_model(self, input_dim: int = 40) -> ChurnANN:
         if self.ann is None or self.input_dim != input_dim:
@@ -96,8 +105,12 @@ class ModelManager:
             model = ChurnANN(input_features=input_dim).to(self.device)
             if ANN_MODEL_PATH.exists():
                 try:
-                    state_dict = torch.load(ANN_MODEL_PATH, map_location=self.device, weights_only=True)
-                    model.load_state_dict(state_dict)
+                    checkpoint = torch.load(ANN_MODEL_PATH, map_location=self.device)
+                    if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+                        model.load_state_dict(checkpoint["model_state_dict"])
+                    else:
+                        model.load_state_dict(checkpoint)
+                    self.ann_loaded = True
                 except Exception as e:
                     print(f"Warning: Could not load saved ANN weights ({e}). Initializing calibrated baseline.")
             model.eval()
@@ -107,12 +120,21 @@ class ModelManager:
     def get_rnn_model(self, input_size: int = len(SEQ_FEATURES)) -> ChurnRNN:
         if self.rnn is None:
             model = ChurnRNN(input_size=input_size).to(self.device)
-            if RNN_MODEL_PATH.exists():
-                try:
-                    state_dict = torch.load(RNN_MODEL_PATH, map_location=self.device, weights_only=True)
-                    model.load_state_dict(state_dict)
-                except Exception as e:
-                    print(f"Warning: Could not load saved RNN weights ({e}).")
+            candidates = [RNN_MODEL_PATH, RNN_LEGACY_PATH]
+            for path in candidates:
+                if path.exists():
+                    try:
+                        checkpoint = torch.load(path, map_location=self.device)
+                        if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+                            model.load_state_dict(checkpoint["model_state_dict"])
+                            self.rnn_metadata = {k: v for k, v in checkpoint.items() if k != "model_state_dict"}
+                        else:
+                            model.load_state_dict(checkpoint)
+                        self.rnn_loaded = True
+                        self.rnn_metadata["weights_path"] = str(path)
+                        break
+                    except Exception as e:
+                        print(f"Warning: Could not load saved RNN weights from {path} ({e}).")
             model.eval()
             self.rnn = model
         return self.rnn
@@ -120,15 +142,55 @@ class ModelManager:
     def get_lstm_model(self, input_size: int = len(SEQ_FEATURES)) -> ChurnLSTM:
         if self.lstm is None:
             model = ChurnLSTM(input_size=input_size).to(self.device)
-            if LSTM_MODEL_PATH.exists():
-                try:
-                    state_dict = torch.load(LSTM_MODEL_PATH, map_location=self.device, weights_only=True)
-                    model.load_state_dict(state_dict)
-                except Exception as e:
-                    print(f"Warning: Could not load saved LSTM weights ({e}).")
+            candidates = [LSTM_MODEL_PATH, LSTM_LEGACY_PATH]
+            for path in candidates:
+                if path.exists():
+                    try:
+                        checkpoint = torch.load(path, map_location=self.device)
+                        if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+                            model.load_state_dict(checkpoint["model_state_dict"])
+                            self.lstm_metadata = {k: v for k, v in checkpoint.items() if k != "model_state_dict"}
+                        else:
+                            model.load_state_dict(checkpoint)
+                        self.lstm_loaded = True
+                        self.lstm_metadata["weights_path"] = str(path)
+                        break
+                    except Exception as e:
+                        print(f"Warning: Could not load saved LSTM weights from {path} ({e}).")
             model.eval()
             self.lstm = model
         return self.lstm
+
+    def get_model_status(self) -> dict:
+        """Return diagnostic info regarding loaded models, device, and sequential scaler."""
+        rnn = self.get_rnn_model()
+        lstm = self.get_lstm_model()
+        return {
+            "device": str(self.device),
+            "ann": {
+                "loaded": self.ann_loaded,
+                "weights_path": str(ANN_MODEL_PATH) if ANN_MODEL_PATH.exists() else None,
+                "architecture": "ANN (40 -> 128 -> 64 -> 32 -> 1)"
+            },
+            "rnn": {
+                "loaded": self.rnn_loaded,
+                "weights_path": self.rnn_metadata.get("weights_path"),
+                "best_validation_pr_auc": self.rnn_metadata.get("best_validation_pr_auc"),
+                "parameters": sum(p.numel() for p in rnn.parameters()),
+                "architecture": f"RNN(input={len(SEQ_FEATURES)}, hidden=64, layers=1)"
+            },
+            "lstm": {
+                "loaded": self.lstm_loaded,
+                "weights_path": self.lstm_metadata.get("weights_path"),
+                "best_validation_pr_auc": self.lstm_metadata.get("best_validation_pr_auc"),
+                "parameters": sum(p.numel() for p in lstm.parameters()),
+                "architecture": f"LSTM(input={len(SEQ_FEATURES)}, hidden=64, layers=1, dropout=0.2)"
+            },
+            "sequence_scaler": {
+                "exists": SEQ_SCALER_PATH.exists(),
+                "path": str(SEQ_SCALER_PATH)
+            }
+        }
 
     def predict_ann(self, feature_vector: np.ndarray) -> float:
         """Inference for ANN model with sigmoid probability."""

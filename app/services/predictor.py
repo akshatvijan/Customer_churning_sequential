@@ -119,23 +119,8 @@ class ChurnPredictorService:
             lstm_res = cls.predict_sequence(combined.history, model_type="LSTM")
             lstm_prob = lstm_res.churn_probability
         else:
-            # Generate synthetic trajectory consistent with customer profile
-            base_gb = combined.customer.avg_monthly_gb
-            base_charge = combined.customer.monthlycharges
-            complaints = combined.customer.num_complaints
-            late = combined.customer.late_payments
-
-            syn_seq = []
-            for m in range(1, 6):
-                syn_seq.append(MonthlyRecord(
-                    month=m,
-                    avg_monthly_gb=max(5.0, base_gb + (m - 3) * (-3.0 if complaints > 0 else 2.0)),
-                    monthlycharges=base_charge,
-                    num_complaints=min(complaints, max(0.0, complaints - (5 - m))),
-                    num_service_calls=float(combined.customer.num_service_calls),
-                    late_payments=min(late, 1.0 if m >= 4 and late > 0 else 0.0),
-                    days_since_last_interaction=float(combined.customer.days_since_last_interaction)
-                ))
+            # Generate synthetic trajectory using Aditya's Dirichlet and random-walk algorithm
+            syn_seq = ChurnPreprocessor.generate_synthetic_sequence(combined.customer)
             seq_in = CustomerSequenceInput(customer_id=combined.customer.customer_id, sequence=syn_seq)
             lstm_res = cls.predict_sequence(seq_in, model_type="LSTM")
             lstm_prob = lstm_res.churn_probability

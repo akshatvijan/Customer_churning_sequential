@@ -1,9 +1,10 @@
+import joblib
 import numpy as np
 import pandas as pd
-from typing import List, Dict, Tuple, Any
+from typing import List, Dict, Tuple, Any, Optional
 from app.schemas.customer import CustomerInput
 from app.schemas.sequence import MonthlyRecord
-from app.config import SEQ_FEATURES
+from app.config import SEQ_FEATURES, COUNT_FEATURES, SEQUENCE_LENGTH, SEQ_SCALER_PATH
 
 
 # Categorical domain values based on dataset
@@ -155,24 +156,59 @@ class ChurnPreprocessor:
 
         return feature_vector, risk_factors
 
+    _seq_scaler: Optional[Any] = None
+
+    @classmethod
+    def get_sequence_scaler(cls):
+        """Lazy load and cache the sequence scaler saved by Aditya's rnn pipeline."""
+        if cls._seq_scaler is None and SEQ_SCALER_PATH.exists():
+            try:
+                cls._seq_scaler = joblib.load(SEQ_SCALER_PATH)
+            except Exception as e:
+                print(f"Warning: Could not load saved sequence scaler from {SEQ_SCALER_PATH} ({e})")
+        return cls._seq_scaler
+
     @staticmethod
-    def preprocess_sequence(records: List[MonthlyRecord]) -> Tuple[np.ndarray, str]:
+    def _fallback_scale(raw_mat: np.ndarray) -> np.ndarray:
+        """Standard fallback scaling when sequence_scaler.pkl is not yet trained."""
+        scaled = np.zeros_like(raw_mat, dtype=np.float32)
+        scaled[:, 0] = (raw_mat[:, 0] - 50.0) / 30.0
+        scaled[:, 1] = (raw_mat[:, 1] - 70.0) / 30.0
+        scaled[:, 2] = raw_mat[:, 2] / 2.0
+        scaled[:, 3] = raw_mat[:, 3] / 2.0
+        scaled[:, 4] = raw_mat[:, 4] / 2.0
+        scaled[:, 5] = (raw_mat[:, 5] - 15.0) / 15.0
+        return scaled
+
+    @classmethod
+    def preprocess_sequence(cls, records: List[MonthlyRecord]) -> Tuple[np.ndarray, str]:
         """Preprocess 5-month behavioural sequence for RNN / LSTM input.
 
-        Input: list of MonthlyRecord objects.
+        Uses Aditya's trained sequence_scaler.pkl when available, otherwise falls back to
+        calibrated heuristic scaling.
         Output: numpy array of shape (1, seq_len, 6) and trajectory classification.
         """
         sorted_records = sorted(records, key=lambda r: r.month)
         seq_len = len(sorted_records)
 
-        mat = np.zeros((seq_len, len(SEQ_FEATURES)), dtype=np.float32)
+        raw_mat = np.zeros((seq_len, len(SEQ_FEATURES)), dtype=np.float32)
         for i, rec in enumerate(sorted_records):
-            mat[i, 0] = (rec.avg_monthly_gb - 50.0) / 30.0
-            mat[i, 1] = (rec.monthlycharges - 70.0) / 30.0
-            mat[i, 2] = rec.num_complaints / 2.0
-            mat[i, 3] = rec.num_service_calls / 2.0
-            mat[i, 4] = rec.late_payments / 2.0
-            mat[i, 5] = (rec.days_since_last_interaction - 15.0) / 15.0
+            raw_mat[i, 0] = float(rec.avg_monthly_gb)
+            raw_mat[i, 1] = float(rec.monthlycharges)
+            raw_mat[i, 2] = float(rec.num_complaints)
+            raw_mat[i, 3] = float(rec.num_service_calls)
+            raw_mat[i, 4] = float(rec.late_payments)
+            raw_mat[i, 5] = float(rec.days_since_last_interaction)
+
+        scaler = cls.get_sequence_scaler()
+        if scaler is not None:
+            try:
+                scaled_mat = scaler.transform(raw_mat).astype(np.float32)
+            except Exception as e:
+                print(f"Warning: Sequence scaler transform failed ({e}), using fallback.")
+                scaled_mat = cls._fallback_scale(raw_mat)
+        else:
+            scaled_mat = cls._fallback_scale(raw_mat)
 
         # Assess trajectory trend: comparing final month vs first month
         first_m = sorted_records[0]
@@ -189,4 +225,52 @@ class ChurnPreprocessor:
         else:
             trend = "Stable (Consistent behavioural pattern)"
 
-        return mat.reshape(1, seq_len, len(SEQ_FEATURES)), trend
+        return scaled_mat.reshape(1, seq_len, len(SEQ_FEATURES)), trend
+
+    @classmethod
+    def generate_synthetic_sequence(cls, customer: CustomerInput, seq_len: int = SEQUENCE_LENGTH, seed: int = 42) -> List[MonthlyRecord]:
+        """Synthesize a multi-month behavioural trajectory from customer profile.
+
+        Adopts Aditya's Dirichlet event accumulation and random-walk algorithm (from rnn/data.py),
+        guaranteeing the final month strictly equals the customer's observed values.
+        """
+        rng = np.random.default_rng(seed)
+        final_vals = np.array([
+            customer.avg_monthly_gb,
+            customer.monthlycharges,
+            customer.num_complaints,
+            customer.num_service_calls,
+            customer.late_payments,
+            customer.days_since_last_interaction,
+        ], dtype=np.float32)
+
+        seq = np.empty((seq_len, len(SEQ_FEATURES)), dtype=np.float32)
+
+        for j, col in enumerate(SEQ_FEATURES):
+            val = final_vals[j]
+            if col in COUNT_FEATURES:
+                weights = rng.dirichlet(np.ones(seq_len))
+                seq[:, j] = np.floor(np.cumsum(weights) * val)
+            elif col == "days_since_last_interaction":
+                seq[:, j] = val * rng.uniform(0.5, 1.5, size=seq_len)
+            else:
+                steps = rng.normal(0, 0.05, size=seq_len)
+                steps[-1] = 0.0
+                drift = np.cumsum(steps[::-1])[::-1]
+                seq[:, j] = val * (1.0 + drift)
+            seq[-1, j] = val
+
+        seq = np.clip(seq, 0.0, None)
+
+        records: List[MonthlyRecord] = []
+        for m in range(seq_len):
+            records.append(MonthlyRecord(
+                month=m + 1,
+                avg_monthly_gb=round(float(seq[m, 0]), 1),
+                monthlycharges=round(float(seq[m, 1]), 2),
+                num_complaints=float(int(seq[m, 2])),
+                num_service_calls=float(int(seq[m, 3])),
+                late_payments=float(int(seq[m, 4])),
+                days_since_last_interaction=round(float(seq[m, 5]), 1)
+            ))
+        return records
