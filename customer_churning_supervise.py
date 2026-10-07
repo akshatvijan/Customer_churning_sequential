@@ -180,17 +180,17 @@ decision_tree_grid = GridSearchCV(
   verbose=1
   )
 
-  start_time = time.time()
+start_time = time.time()
 
-  decision_tree_grid.fit(
+decision_tree_grid.fit(
   X_train_sample,
   y_train_sample
   )
 
-  decision_tree_train_time = time.time() - start_time
+ decision_tree_train_time = time.time() - start_time
 
-  print("Best Parameters:")
-  print(decision_tree_grid.best_params_)
+print("Best Parameters:")
+print(decision_tree_grid.best_params_)
 
   print("\nBest CV Accuracy:")
   print(decision_tree_grid.best_score_)
