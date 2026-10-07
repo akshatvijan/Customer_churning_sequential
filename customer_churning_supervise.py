@@ -156,121 +156,121 @@ print("Original Training Data:", X_train_final.shape)
 print("GridSearch Training Sample:", X_train_sample.shape)
 
 decision_tree_pipeline = Pipeline([
-  (
-  "model",
-  DecisionTreeClassifier(
-  random_state=42
-  )
-  )
-  ])
+(
+"model",
+DecisionTreeClassifier(
+random_state=42
+)
+)
+])
 
 decision_tree_param_grid = {
-  "model__criterion": ["gini", "entropy"],
-  "model__max_depth": [10, 20, 30],
-  "model__min_samples_split": [2, 10],
-  "model__min_samples_leaf": [1, 5]
-  }
+"model__criterion": ["gini", "entropy"],
+"model__max_depth": [10, 20, 30],
+"model__min_samples_split": [2, 10],
+"model__min_samples_leaf": [1, 5]
+}
 
 decision_tree_grid = GridSearchCV(
-  estimator=decision_tree_pipeline,
-  param_grid=decision_tree_param_grid,
-  cv=3,
-  scoring="accuracy",
-  n_jobs=-1,
-  verbose=1
-  )
+estimator=decision_tree_pipeline,
+param_grid=decision_tree_param_grid,
+cv=3,
+scoring="accuracy",
+n_jobs=-1,
+verbose=1
+)
 
 start_time = time.time()
 
 decision_tree_grid.fit(
-  X_train_sample,
-  y_train_sample
-  )
+X_train_sample,
+y_train_sample
+)
 
- decision_tree_train_time = time.time() - start_time
+decision_tree_train_time = time.time() - start_time
 
 print("Best Parameters:")
 print(decision_tree_grid.best_params_)
 
-  print("\nBest CV Accuracy:")
-  print(decision_tree_grid.best_score_)
+print("\nBest CV Accuracy:")
+print(decision_tree_grid.best_score_)
 
-  print("\nTraining Time:")
-  print(decision_tree_train_time)
+print("\nTraining Time:")
+print(decision_tree_train_time)
 
 best_decision_tree = decision_tree_grid.best_estimator_
 
-  start_time = time.time()
+start_time = time.time()
 
-  y_val_pred_dt = best_decision_tree.predict(X_val_final)
-  y_val_prob_dt = best_decision_tree.predict_proba(X_val_final)[:, 1]
+y_val_pred_dt = best_decision_tree.predict(X_val_final)
+y_val_prob_dt = best_decision_tree.predict_proba(X_val_final)[:, 1]
 
-  decision_tree_inference_time = time.time() - start_time
+decision_tree_inference_time = time.time() - start_time
 
-  decision_tree_val_accuracy = accuracy_score(
-  y_val_final,
-  y_val_pred_dt
-  )
+decision_tree_val_accuracy = accuracy_score(
+y_val_final,
+y_val_pred_dt
+)
 
-  decision_tree_val_precision = precision_score(
-  y_val_final,
-  y_val_pred_dt
-  )
+decision_tree_val_precision = precision_score(
+y_val_final,
+y_val_pred_dt
+)
 
-  decision_tree_val_recall = recall_score(
-  y_val_final,
-  y_val_pred_dt
-  )
+decision_tree_val_recall = recall_score(
+y_val_final,
+y_val_pred_dt
+)
 
-  decision_tree_val_f1 = f1_score(
-  y_val_final,
-  y_val_pred_dt
-  )
+decision_tree_val_f1 = f1_score(
+y_val_final,
+y_val_pred_dt
+)
 
-  decision_tree_val_roc_auc = roc_auc_score(
-  y_val_final,
-  y_val_prob_dt
-  )
+decision_tree_val_roc_auc = roc_auc_score(
+y_val_final,
+y_val_prob_dt
+)
 
-  decision_tree_val_pr_auc = average_precision_score(
-  y_val_final,
-  y_val_prob_dt
-  )
+decision_tree_val_pr_auc = average_precision_score(
+y_val_final,
+y_val_prob_dt
+)
 
-  print("Decision Tree Validation Results")
+print("Decision Tree Validation Results")
 
-  print(f"Accuracy  : {decision_tree_val_accuracy:.4f}")
-  print(f"Precision : {decision_tree_val_precision:.4f}")
-  print(f"Recall    : {decision_tree_val_recall:.4f}")
-  print(f"F1 Score  : {decision_tree_val_f1:.4f}")
-  print(f"ROC-AUC   : {decision_tree_val_roc_auc:.4f}")
-  print(f"PR-AUC    : {decision_tree_val_pr_auc:.4f}")
+print(f"Accuracy  : {decision_tree_val_accuracy:.4f}")
+print(f"Precision : {decision_tree_val_precision:.4f}")
+print(f"Recall    : {decision_tree_val_recall:.4f}")
+print(f"F1 Score  : {decision_tree_val_f1:.4f}")
+print(f"ROC-AUC   : {decision_tree_val_roc_auc:.4f}")
+print(f"PR-AUC    : {decision_tree_val_pr_auc:.4f}")
 
-  print("\nConfusion Matrix:")
-  print(
-  confusion_matrix(
-  y_val_final,
-  y_val_pred_dt
-  )
-  )
+print("\nConfusion Matrix:")
+print(
+confusion_matrix(
+y_val_final,
+y_val_pred_dt
+)
+)
 
-  print("\nClassification Report:")
-  print(
-  classification_report(
-  y_val_final,
-  y_val_pred_dt
-  )
-  )
+print("\nClassification Report:")
+print(
+classification_report(
+y_val_final,
+y_val_pred_dt
+)
+)
 
-  print(
-  f"\nInference Time: "
-  f"{decision_tree_inference_time:.4f} seconds"
-  )
+print(
+f"\nInference Time: "
+f"{decision_tree_inference_time:.4f} seconds"
+)
 
-  print(
-  f"Training Time: "
-  f"{decision_tree_train_time:.4f} seconds"
-  )
+print(
+f"Training Time: "
+f"{decision_tree_train_time:.4f} seconds"
+)
 
 """## Random Forest"""
 
